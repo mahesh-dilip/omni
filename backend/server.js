@@ -40,32 +40,60 @@ const verifyToken = async (req, res, next) => {
 
 // --- API ENDPOINTS ---
 
-// Endpoint 1: Identify Image (using gemini-1.5-flash)
-app.post("/api/identify", verifyToken, async (req, res) => {
+// --- NEW: Consolidated Smart Extraction Endpoint ---
+app.post("/api/extract-details", verifyToken, async (req, res) => {
   const { imageBase64, mimeType } = req.body;
   if (!imageBase64 || !mimeType) {
-    return res.status(400).send({ error: "Missing imageBase64 or mimeType" });
+    return res.status(400).send({ error: "Missing image data." });
   }
 
   try {
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
     const imagePart = { inline_data: { data: imageBase64, mime_type: mimeType } };
+
+    // --- The New, Smarter Prompt ---
     const prompt = `
-      You are an expert at identifying objects in images. Analyze the provided image and perform the following tasks:
-      1.  **Identify Name**: Provide a concise, clear name for the primary object in the image.
-      2.  **Write Description**: Write a brief, one-sentence physical description of the item. Include the brand, model, and any other relevant details.
-      3.  **Categorize**: Choose the single best category from this list: ["Electronics", "Tools & Hardware", "Clothing & Accessories", "Books & Media", "Collectibles & Art", "Kitchen & Home", "Sports & Outdoors", "Musical Instruments", "Health & Beauty", "Toys & Games", "Other"].
-      Provide your response ONLY as a valid JSON object with the structure: {"name": "string", "description": "string", "category": "string"}`;
+      You are a multi-talented expert at analyzing images. Your goal is to identify an object, determine its key valuation attributes, and extract any of those attribute values if they are visible in the image.
+
+      Analyze the provided image and perform these tasks in order:
+      1.  **Identify**: Provide a concise name and a brief physical description for the primary object.
+      2.  **Categorize**: Choose the single best category from this list: ["Electronics", "Tools & Hardware", "Clothing & Accessories", "Books & Media", "Collectibles & Art", "Kitchen & Home", "Sports & Outdoors", "Musical Instruments", "Health & Beauty", "Toys & Games", "Other"].
+      3.  **Determine Attributes**: Based on the identified category, decide the 3-5 most important attributes for valuation. Always include "Condition". For "Condition", the options must be ["New", "Like New", "Good", "Fair", "Poor"].
+      4.  **Extract Values**: Look closely at the image for any text, logos, or details. Try to fill in the values for the attributes you just determined. If you cannot find a value, leave it as an empty string "". For "Condition", make a reasonable guess based on visual wear and tear.
+
+      Provide your response ONLY as a valid JSON object with the following structure:
+      {
+        "name": "string",
+        "description": "string",
+        "category": "string",
+        "attributes": [
+          { "name": "attribute_name", "label": "Attribute Label", "type": "select" or "text", "options": ["..."], "value": "The value you extracted or guessed, or an empty string" }
+        ]
+      }
+
+      Example for an image of a MacBook with visible text:
+      {
+        "name": "MacBook Air 13-inch",
+        "description": "A silver Apple laptop computer.",
+        "category": "Electronics",
+        "attributes": [
+          { "name": "condition", "label": "Condition", "type": "select", "options": ["New", "Like New", "Good", "Fair", "Poor"], "value": "Good" },
+          { "name": "year", "label": "Year", "type": "text", "value": "2020" },
+          { "name": "storage", "label": "Storage (GB)", "type": "text", "value": "" }
+        ]
+      }
+    `;
     
-    console.log("Sending identification request to Gemini...");
+    console.log("Sending smart extraction request to Gemini...");
     const result = await model.generateContent([prompt, imagePart]);
     const responseText = result.response.text().replace(/```json/g, "").replace(/```/g, "").trim();
-    console.log("Received identification from Gemini.");
+    console.log("Received smart extraction from Gemini.");
     
     res.status(200).json(JSON.parse(responseText));
+
   } catch (error) {
-    console.error("Error in /api/identify:", error);
-    res.status(500).send({ error: "Failed to analyze image." });
+    console.error("Error in /api/extract-details:", error);
+    res.status(500).send({ error: "Failed to process image." });
   }
 });
 
@@ -218,6 +246,65 @@ app.put("/api/items/:itemId", verifyToken, async (req, res) => {
   }
 });
 
+// Endpoint for getting dynamic attributes based on category
+app.post("/api/get-attributes", verifyToken, async (req, res) => {
+  const { category, itemName } = req.body;
+  if (!category || !itemName) {
+    return res.status(400).send({ error: "Category and item name are required." });
+  }
+
+  try {
+    // We can use a fast model for this classification/generation task
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    
+    const prompt = `
+      You are a product specification expert. For an item named "${itemName}" in the category "${category}", what are the 3-5 most important attributes that determine its resale value?
+
+      Always include "Condition" as one of the attributes.
+      For "Condition", the options should always be a select dropdown with these exact values: ["New", "Like New", "Good", "Fair", "Poor"].
+      For other attributes like RAM or Storage, use a "text" input. For Year, also use a "text" input. For shoe or clothing sizes, use a "text" input.
+
+      Provide your response ONLY as a valid JSON object with the following structure:
+      {
+        "attributes": [
+          { 
+            "name": "attribute_name_for_code", 
+            "label": "Human-Friendly Label", 
+            "type": "select" or "text", 
+            "options": ["option1", "option2"] (only include this for the 'select' type) 
+          }
+        ]
+      }
+
+      Example for a MacBook:
+      {
+        "attributes": [
+          { "name": "condition", "label": "Condition", "type": "select", "options": ["New", "Like New", "Good", "Fair", "Poor"] },
+          { "name": "ram", "label": "RAM (GB)", "type": "text" },
+          { "name": "storage", "label": "Storage (GB)", "type": "text" },
+          { "name": "year", "label": "Year", "type": "text" }
+        ]
+      }
+    `;
+
+    console.log(`Getting attributes for: ${itemName}`);
+    const result = await model.generateContent(prompt);
+    const responseText = result.response.text().replace(/```json/g, "").replace(/```/g, "").trim();
+    console.log("Received attributes from Gemini.");
+    
+    res.status(200).json(JSON.parse(responseText));
+
+  } catch (error) {
+    console.error("Error in /api/get-attributes:", error);
+    // As a fallback, just ask for the condition if the AI fails
+    res.status(500).json({ 
+        attributes: [
+            { name: "condition", label: "Condition", type: "select", options: ["New", "Like New", "Good", "Fair", "Poor"] }
+        ] 
+    });
+  }
+});
+
 // --- Firestore Listener for Re-evaluation ---
 function setupReevaluationListener() {
   console.log("Setting up listener for re-evaluation requests...");
@@ -240,35 +327,60 @@ async function performRevaluation(itemRef, itemData, itemId) {
   try {
     await itemRef.update({ status: `re_valuation_started_${Date.now()}` });
     const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash", tools: [{ "google_search": {} }] });
-    const prompt = `You are an expert asset appraiser. Re-evaluate the following item. Item Name: "${itemData.name}", Description: "${itemData.description}", Category: "${itemData.category}". Provide your response ONLY as a valid JSON object with the structure: {"is_trackable": boolean, "estimated_value": number, "currency": "USD", "reasoning": "A brief explanation for your valuation."}`;
+
+    // --- NEW: Dynamically build the attributes string for the prompt ---
+    let attributesString = '';
+    if (itemData.attributes) {
+      attributesString = Object.entries(itemData.attributes)
+        .map(([key, value]) => `- ${key.charAt(0).toUpperCase() + key.slice(1)}: ${value}`)
+        .join('\n');
+    }
+
+    // --- MODIFIED PROMPT ---
+    const prompt = `
+      You are an expert asset appraiser. Your task is to determine the value of an item based on its user-confirmed details.
+      
+      Item Name: "${itemData.name}"
+      Description: "${itemData.description}"
+      Category: "${itemData.category}"
+      
+      Specific Attributes:
+      ${attributesString}
+
+      Your tasks:
+      1. **Identify if Trackable**: Based on all this info, decide if this item's value is worth tracking.
+      2. **Valuation**: If the item IS trackable, use your Google Search tool to find its current estimated market value given all the specific details provided. If it is NOT trackable, set the value to 0.
+      
+      Provide your response ONLY as a valid JSON object with the structure: {"is_trackable": boolean, "estimated_value": number, "currency": "USD", "reasoning": "A brief explanation for your valuation, considering the provided attributes."}
+    `;
 
     // Retry logic...
     let attempts = 0;
     let analysisData;
     while(attempts < 3) {
-        try {
-            console.log(`Sending re-valuation request for ${itemId} (Attempt ${attempts + 1})`);
-            const result = await model.generateContent(prompt);
-            analysisData = JSON.parse(result.response.text().replace(/```json/g, "").replace(/```/g, "").trim());
-            break;
-        } catch (error) {
-            attempts++;
-            if (attempts >= 3) throw error;
-            await new Promise(resolve => setTimeout(resolve, 2000));
-        }
+      try {
+        console.log(`Sending re-valuation request for ${itemId} (Attempt ${attempts + 1})`);
+        const result = await model.generateContent(prompt);
+        analysisData = JSON.parse(result.response.text().replace(/```json/g, "").replace(/```/g, "").trim());
+        break;
+      } catch (error) {
+        attempts++;
+        if (attempts >= 3) throw error;
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
     }
     
     await itemRef.update({
-        estimated_value: analysisData.estimated_value,
-        reasoning: analysisData.reasoning,
-        lastValuedAt: admin.firestore.FieldValue.serverTimestamp(),
-        status: "analyzed",
+      estimated_value: analysisData.estimated_value,
+      reasoning: analysisData.reasoning,
+      lastValuedAt: admin.firestore.FieldValue.serverTimestamp(),
+      status: "analyzed",
     });
 
     const historyRef = itemRef.collection("valuations").doc();
     await historyRef.set({
-        value: analysisData.estimated_value,
-        date: admin.firestore.FieldValue.serverTimestamp(),
+      value: analysisData.estimated_value,
+      date: admin.firestore.FieldValue.serverTimestamp(),
     });
     console.log(`Re-evaluation complete for ${itemId}`);
 
