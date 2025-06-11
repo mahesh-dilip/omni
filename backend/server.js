@@ -53,7 +53,7 @@ app.post("/api/identify", verifyToken, async (req, res) => {
     const prompt = `
       You are an expert at identifying objects in images. Analyze the provided image and perform the following tasks:
       1.  **Identify Name**: Provide a concise, clear name for the primary object in the image.
-      2.  **Write Description**: Write a brief, one-sentence physical description of the item.
+      2.  **Write Description**: Write a brief, one-sentence physical description of the item. Include the brand, model, and any other relevant details.
       3.  **Categorize**: Choose the single best category from this list: ["Electronics", "Tools & Hardware", "Clothing & Accessories", "Books & Media", "Collectibles & Art", "Kitchen & Home", "Sports & Outdoors", "Musical Instruments", "Health & Beauty", "Toys & Games", "Other"].
       Provide your response ONLY as a valid JSON object with the structure: {"name": "string", "description": "string", "category": "string"}`;
     
