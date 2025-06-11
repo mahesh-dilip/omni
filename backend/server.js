@@ -210,7 +210,7 @@ app.delete("/api/items/:itemId", verifyToken, async (req, res) => {
 app.put("/api/items/:itemId", verifyToken, async (req, res) => {
   const { itemId } = req.params;
   const { uid } = req.user;
-  const { name, description, category } = req.body;
+  const { name, description, category, attributes } = req.body;
 
   if (!name || !category) {
     return res.status(400).send({ error: "Item name and category are required." });
@@ -235,10 +235,11 @@ app.put("/api/items/:itemId", verifyToken, async (req, res) => {
       name,
       description,
       category,
+      attributes,
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
-    console.log(`Successfully updated item ${itemId}`);
+    console.log(`Successfully updated item ${itemId} with new attributes`);
     res.status(200).send({ success: true, message: "Item updated." });
   } catch (error) {
     console.error(`Error updating item ${itemId}:`, error);
