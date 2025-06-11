@@ -160,6 +160,46 @@ app.delete("/api/items/:itemId", verifyToken, async (req, res) => {
   }
 });
 
+// Endpoint 4: Edit an Item's Details
+app.put("/api/items/:itemId", verifyToken, async (req, res) => {
+  const { itemId } = req.params;
+  const { uid } = req.user;
+  const { name, description, category } = req.body;
+
+  if (!name || !category) {
+    return res.status(400).send({ error: "Item name and category are required." });
+  }
+
+  console.log(`Attempting to update item ${itemId} for user ${uid}`);
+  const itemRef = admin.firestore().collection("items").doc(itemId);
+
+  try {
+    const doc = await itemRef.get();
+    if (!doc.exists) {
+      return res.status(404).send({ error: "Item not found" });
+    }
+
+    // Security Check: Ensure the user owns this item
+    if (doc.data().owner !== uid) {
+      return res.status(403).send({ error: "Permission denied." });
+    }
+
+    // Update the document in Firestore with the new data
+    await itemRef.update({
+      name,
+      description,
+      category,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    console.log(`Successfully updated item ${itemId}`);
+    res.status(200).send({ success: true, message: "Item updated." });
+  } catch (error) {
+    console.error(`Error updating item ${itemId}:`, error);
+    res.status(500).send({ error: "Failed to update item." });
+  }
+});
+
 app.listen(port, () => {
   console.log(`Backend server running at http://localhost:${port}`);
 }); 
