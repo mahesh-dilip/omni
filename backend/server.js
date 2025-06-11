@@ -14,6 +14,7 @@ const serviceAccount = require("./serviceAccountKey.json");
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
 });
+const db = admin.firestore();
 
 // Initialize Gemini AI Client
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -29,8 +30,7 @@ const verifyToken = async (req, res, next) => {
     return res.status(401).send({ error: "Unauthorized: No token provided" });
   }
   try {
-    const decodedToken = await admin.auth().verifyIdToken(token);
-    req.user = decodedToken; // Add user info to the request object
+    req.user = await admin.auth().verifyIdToken(token);
     next();
   } catch (error) {
     console.error("Error verifying token:", error);
@@ -101,10 +101,28 @@ app.post("/api/value", verifyToken, async (req, res) => {
     console.log(`Received valuation for ${itemId}.`);
     
     const analysisData = JSON.parse(responseText);
-    await itemRef.update({
-        ...analysisData,
-        status: "analyzed",
+
+    // Create a batch write to update both the main document and add a valuation record
+    const batch = admin.firestore().batch();
+    
+    // Update the main item document
+    batch.update(itemRef, {
+      ...analysisData,
+      status: "analyzed",
+      lastValuationDate: admin.firestore.FieldValue.serverTimestamp()
     });
+
+    // Add a new valuation record to the subcollection
+    const valuationRef = itemRef.collection("valuations").doc();
+    batch.set(valuationRef, {
+      value: analysisData.estimated_value,
+      date: admin.firestore.FieldValue.serverTimestamp(),
+      reasoning: analysisData.reasoning
+    });
+
+    // Commit the batch
+    await batch.commit();
+    console.log(`Successfully updated item ${itemId} and added valuation record.`);
 
     res.status(200).send({ success: true, message: "Valuation complete." });
   } catch (error) {
@@ -200,6 +218,67 @@ app.put("/api/items/:itemId", verifyToken, async (req, res) => {
   }
 });
 
+// --- Firestore Listener for Re-evaluation ---
+function setupReevaluationListener() {
+  console.log("Setting up listener for re-evaluation requests...");
+  const query = db.collection("items").where("status", "==", "needs_re_evaluation");
+
+  query.onSnapshot(snapshot => {
+    snapshot.docChanges().forEach(change => {
+      if (change.type === "added" || change.type === "modified") {
+        const itemData = change.doc.data();
+        const itemId = change.doc.id;
+        console.log(`Re-evaluation request detected for item: ${itemId}`);
+        performRevaluation(change.doc.ref, itemData, itemId);
+      }
+    });
+  }, err => console.error("Listener error:", err));
+}
+
+// This helper function contains the AI logic and is only called by the server
+async function performRevaluation(itemRef, itemData, itemId) {
+  try {
+    await itemRef.update({ status: `re_valuation_started_${Date.now()}` });
+    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash", tools: [{ "google_search": {} }] });
+    const prompt = `You are an expert asset appraiser. Re-evaluate the following item. Item Name: "${itemData.name}", Description: "${itemData.description}", Category: "${itemData.category}". Provide your response ONLY as a valid JSON object with the structure: {"is_trackable": boolean, "estimated_value": number, "currency": "USD", "reasoning": "A brief explanation for your valuation."}`;
+
+    // Retry logic...
+    let attempts = 0;
+    let analysisData;
+    while(attempts < 3) {
+        try {
+            console.log(`Sending re-valuation request for ${itemId} (Attempt ${attempts + 1})`);
+            const result = await model.generateContent(prompt);
+            analysisData = JSON.parse(result.response.text().replace(/```json/g, "").replace(/```/g, "").trim());
+            break;
+        } catch (error) {
+            attempts++;
+            if (attempts >= 3) throw error;
+            await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+    }
+    
+    await itemRef.update({
+        estimated_value: analysisData.estimated_value,
+        reasoning: analysisData.reasoning,
+        lastValuedAt: admin.firestore.FieldValue.serverTimestamp(),
+        status: "analyzed",
+    });
+
+    const historyRef = itemRef.collection("valuations").doc();
+    await historyRef.set({
+        value: analysisData.estimated_value,
+        date: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    console.log(`Re-evaluation complete for ${itemId}`);
+
+  } catch (error) {
+    console.error(`Failed to re-evaluate item ${itemId}:`, error);
+    await itemRef.update({ status: "error" });
+  }
+}
+
 app.listen(port, () => {
   console.log(`Backend server running at http://localhost:${port}`);
+  setupReevaluationListener();
 }); 
