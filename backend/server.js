@@ -306,6 +306,86 @@ app.post("/api/get-attributes", verifyToken, async (req, res) => {
   }
 });
 
+// Endpoint 5: Re-evaluate an Item
+app.post("/api/items/:itemId/re-evaluate", verifyToken, async (req, res) => {
+  const { itemId } = req.params;
+  const { uid } = req.user;
+
+  console.log(`Attempting to re-evaluate item ${itemId} for user ${uid}`);
+  const itemRef = admin.firestore().collection("items").doc(itemId);
+
+  try {
+    const doc = await itemRef.get();
+    if (!doc.exists) {
+      return res.status(404).send({ error: "Item not found" });
+    }
+
+    const itemData = doc.data();
+
+    // Security Check: Ensure the user owns this item
+    if (itemData.owner !== uid) {
+      return res.status(403).send({ error: "Permission denied." });
+    }
+
+    // Update status to show re-evaluation has started
+    await itemRef.update({ 
+      status: `re_valuation_started_${Date.now()}`,
+      lastRevaluationDate: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    // Use the same valuation logic as the initial valuation
+    const model = genAI.getGenerativeModel({
+      model: "gemini-2.0-flash",
+      tools: [{ "google_search": {} }],
+    });
+
+    const prompt = `
+      You are an expert asset appraiser. Your task is to determine the trackability and value of an item based on its user-confirmed details.
+      Item Name: "${itemData.name}"
+      Item Description: "${itemData.description || ''}"
+      Item Category: "${itemData.category}"
+      Your tasks:
+      1. **Identify if Trackable**: Based on the info, decide if this item's value is worth tracking.
+      2. **Valuation**: If the item IS trackable, use your Google Search tool to find its current estimated market value. If it is NOT trackable, set the value to 0.
+      Provide your response ONLY as a valid JSON object with the structure: {"is_trackable": boolean, "estimated_value": number, "currency": "USD", "reasoning": "A brief explanation for your valuation."}`;
+
+    console.log(`Sending re-evaluation request for ${itemId}...`);
+    const result = await model.generateContent(prompt);
+    const responseText = result.response.text().replace(/```json/g, "").replace(/```/g, "").trim();
+    console.log(`Received re-evaluation for ${itemId}.`);
+
+    const analysisData = JSON.parse(responseText);
+
+    // Create a batch write to update both the main document and add a valuation record
+    const batch = admin.firestore().batch();
+
+    // Update the main item document
+    batch.update(itemRef, {
+      ...analysisData,
+      status: "analyzed",
+      lastValuationDate: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    // Add a new valuation record to the subcollection
+    const valuationRef = itemRef.collection("valuations").doc();
+    batch.set(valuationRef, {
+      value: analysisData.estimated_value,
+      date: admin.firestore.FieldValue.serverTimestamp(),
+      reasoning: analysisData.reasoning
+    });
+
+    // Commit the batch
+    await batch.commit();
+    console.log(`Successfully re-evaluated item ${itemId} and added valuation record.`);
+
+    res.status(200).send({ success: true, message: "Re-evaluation complete." });
+  } catch (error) {
+    console.error(`Error in re-evaluation for item ${itemId}:`, error);
+    await itemRef.update({ status: "error" });
+    res.status(500).send({ error: "Failed to re-evaluate item." });
+  }
+});
+
 // --- Firestore Listener for Re-evaluation ---
 function setupReevaluationListener() {
   console.log("Setting up listener for re-evaluation requests...");
