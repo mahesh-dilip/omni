@@ -36,4 +36,4 @@ export const db = getFirestore(app);
 export const storage = getStorage(app);
 
 // API URL for backend
-export const API_URL = "http://localhost:3001"; 
+export const API_URL = "https://omni-backend-1qqz.onrender.com"; 

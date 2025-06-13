@@ -7,7 +7,7 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 // --- INITIALIZATION ---
 const app = express();
-const port = 3001;
+const port = process.env.PORT || 3001;
 
 // Initialize Firebase Admin SDK
 const serviceAccount = require("./serviceAccountKey.json");
