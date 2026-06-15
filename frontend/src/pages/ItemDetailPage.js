@@ -7,6 +7,7 @@ import { ArrowLeft, Edit2, Save, X, RefreshCw, Trash2 } from 'lucide-react';
 import { Card, CardHeader, CardContent, CardTitle } from '../components/ui';
 import { Badge } from '../components/ui';
 import { Button } from '../components/ui';
+import { mapValuationRecord, formatDisplayValue } from '../lib/portfolio';
 
 // A helper component for displaying attribute rows
 const AttributeRow = ({ label, value }) => (
@@ -65,14 +66,7 @@ export default function ItemDetailPage() {
             orderBy("date", "asc")
         );
         const unsubscribe = onSnapshot(historyQuery, (snapshot) => {
-            const historyData = snapshot.docs.map(doc => {
-                const data = doc.data();
-                return {
-                    date: data.date ? new Date(data.date.seconds * 1000).toLocaleDateString() : 'N/A',
-                    value: data.value,
-                    reasoning: data.reasoning
-                };
-            });
+            const historyData = snapshot.docs.map(doc => mapValuationRecord(doc.data()));
             setValuationHistory(historyData);
         });
         return () => unsubscribe();
@@ -340,9 +334,7 @@ export default function ItemDetailPage() {
                                     <div className="flex justify-between items-center">
                                         <span className="text-slate-600">Current Value</span>
                                         <span className="text-2xl font-bold text-blue-600">
-                                            {item.is_trackable && typeof item.estimated_value === 'number' 
-                                                ? `$${item.estimated_value.toFixed(2)}` 
-                                                : '--'}
+                                            {formatDisplayValue(item)}
                                         </span>
                                     </div>
                                     <div className="flex justify-between items-center">

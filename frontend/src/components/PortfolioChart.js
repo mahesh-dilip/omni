@@ -1,31 +1,13 @@
 import React from 'react';
 import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { aggregateByCategory } from '../lib/portfolio';
 
 // A predefined set of colors for our chart slices
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#ff4d4d', '#4dff4d', '#4d4dff'];
 
 const PortfolioChart = ({ data }) => {
   // We need to process the inventory data to group it by category and sum the values
-  const chartData = React.useMemo(() => {
-    if (!data || data.length === 0) {
-      return [];
-    }
-    
-    const categoryValues = data
-      .filter(item => item.is_trackable && item.status === 'analyzed')
-      .reduce((acc, item) => {
-        const category = item.category || 'Other';
-        const value = item.estimated_value || 0;
-        if (!acc[category]) {
-          acc[category] = 0;
-        }
-        acc[category] += value;
-        return acc;
-      }, {});
-
-    return Object.entries(categoryValues).map(([name, value]) => ({ name, value }));
-
-  }, [data]);
+  const chartData = React.useMemo(() => aggregateByCategory(data), [data]);
 
   if (chartData.length === 0) {
     return (

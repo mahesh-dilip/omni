@@ -4,6 +4,13 @@ require("dotenv").config(); // Load environment variables from .env file
 
 const admin = require("firebase-admin");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
+const {
+  stripCodeFences,
+  storagePathFromUrl,
+  buildAttributesString,
+  validateValueRequest,
+  validateEditRequest,
+} = require("./lib/valuation");
 
 // --- INITIALIZATION ---
 const app = express();
@@ -86,7 +93,7 @@ app.post("/api/extract-details", verifyToken, async (req, res) => {
     
     console.log("Sending smart extraction request to Gemini...");
     const result = await model.generateContent([prompt, imagePart]);
-    const responseText = result.response.text().replace(/```json/g, "").replace(/```/g, "").trim();
+    const responseText = stripCodeFences(result.response.text());
     console.log("Received smart extraction from Gemini.");
     
     res.status(200).json(JSON.parse(responseText));
@@ -100,8 +107,9 @@ app.post("/api/extract-details", verifyToken, async (req, res) => {
 // Endpoint 2: Value Item (using gemini-2.0-flash with search)
 app.post("/api/value", verifyToken, async (req, res) => {
   const { itemId, name, description, category } = req.body;
-  if (!itemId || !name) {
-    return res.status(400).send({ error: "Missing required item details." });
+  const valueCheck = validateValueRequest(req.body);
+  if (!valueCheck.valid) {
+    return res.status(400).send({ error: valueCheck.error });
   }
   
   // Update Firestore immediately to show it's being valuated
@@ -125,7 +133,7 @@ app.post("/api/value", verifyToken, async (req, res) => {
       
     console.log(`Sending valuation request for ${itemId}...`);
     const result = await model.generateContent(prompt);
-    const responseText = result.response.text().replace(/```json/g, "").replace(/```/g, "").trim();
+    const responseText = stripCodeFences(result.response.text());
     console.log(`Received valuation for ${itemId}.`);
     
     const analysisData = JSON.parse(responseText);
@@ -186,7 +194,7 @@ app.delete("/api/items/:itemId", verifyToken, async (req, res) => {
     if (itemData.imageUrl) {
       try {
         // Extract the file path from the URL
-        const filePath = decodeURIComponent(itemData.imageUrl.split("/o/")[1].split("?")[0]);
+        const filePath = storagePathFromUrl(itemData.imageUrl);
         await admin.storage().bucket().file(filePath).delete();
         console.log(`Successfully deleted image at ${filePath}`);
       } catch (storageError) {
@@ -212,8 +220,9 @@ app.put("/api/items/:itemId", verifyToken, async (req, res) => {
   const { uid } = req.user;
   const { name, description, category, attributes } = req.body;
 
-  if (!name || !category) {
-    return res.status(400).send({ error: "Item name and category are required." });
+  const editCheck = validateEditRequest(req.body);
+  if (!editCheck.valid) {
+    return res.status(400).send({ error: editCheck.error });
   }
 
   console.log(`Attempting to update item ${itemId} for user ${uid}`);
@@ -290,7 +299,7 @@ app.post("/api/get-attributes", verifyToken, async (req, res) => {
 
     console.log(`Getting attributes for: ${itemName}`);
     const result = await model.generateContent(prompt);
-    const responseText = result.response.text().replace(/```json/g, "").replace(/```/g, "").trim();
+    const responseText = stripCodeFences(result.response.text());
     console.log("Received attributes from Gemini.");
     
     res.status(200).json(JSON.parse(responseText));
@@ -351,7 +360,7 @@ app.post("/api/items/:itemId/re-evaluate", verifyToken, async (req, res) => {
 
     console.log(`Sending re-evaluation request for ${itemId}...`);
     const result = await model.generateContent(prompt);
-    const responseText = result.response.text().replace(/```json/g, "").replace(/```/g, "").trim();
+    const responseText = stripCodeFences(result.response.text());
     console.log(`Received re-evaluation for ${itemId}.`);
 
     const analysisData = JSON.parse(responseText);
@@ -410,12 +419,7 @@ async function performRevaluation(itemRef, itemData, itemId) {
     const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash", tools: [{ "google_search": {} }] });
 
     // --- NEW: Dynamically build the attributes string for the prompt ---
-    let attributesString = '';
-    if (itemData.attributes) {
-      attributesString = Object.entries(itemData.attributes)
-        .map(([key, value]) => `- ${key.charAt(0).toUpperCase() + key.slice(1)}: ${value}`)
-        .join('\n');
-    }
+    const attributesString = buildAttributesString(itemData.attributes);
 
     // --- MODIFIED PROMPT ---
     const prompt = `
@@ -442,7 +446,7 @@ async function performRevaluation(itemRef, itemData, itemId) {
       try {
         console.log(`Sending re-valuation request for ${itemId} (Attempt ${attempts + 1})`);
         const result = await model.generateContent(prompt);
-        analysisData = JSON.parse(result.response.text().replace(/```json/g, "").replace(/```/g, "").trim());
+        analysisData = JSON.parse(stripCodeFences(result.response.text()));
         break;
       } catch (error) {
         attempts++;

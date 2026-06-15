@@ -9,6 +9,7 @@ import { Badge } from '../components/ui';
 import { Button } from '../components/ui';
 import { Avatar } from '../components/ui';
 import PortfolioChart from '../components/PortfolioChart';
+import { computePortfolioStats, formatDisplayValue } from '../lib/portfolio';
 
 // --- Components ---
 const PortfolioCard = ({ title, value, detail, icon: Icon, gradient }) => (
@@ -42,7 +43,7 @@ const InventoryItemCard = ({ item }) => {
         default:
             statusPill = null;
     }
-    const displayValue = item.is_trackable && typeof item.estimated_value === 'number' ? `$${item.estimated_value.toFixed(2)}` : '--';
+    const displayValue = formatDisplayValue(item);
     return (
         <Link to={`/item/${item.id}`}>
             <Card className="shadow-sm border-0 hover:shadow-md transition-shadow overflow-hidden">
@@ -93,17 +94,7 @@ export default function Dashboard() {
     }, [user]);
 
     // Portfolio stats calculation
-    const portfolioStats = useMemo(() => {
-        if (!inventory || inventory.length === 0) return { totalValue: "0.00", trackedItems: 0, mostValuable: 'N/A' };
-        const tracked = inventory.filter(item => item.is_trackable && item.status === 'analyzed');
-        const totalValue = tracked.reduce((sum, item) => sum + (item.estimated_value || 0), 0);
-        const mostValuable = tracked.length > 0 ? tracked.reduce((max, item) => (item.estimated_value || 0) > (max.estimated_value || 0) ? item : max, tracked[0]) : null;
-        return {
-            totalValue: totalValue.toFixed(2),
-            trackedItems: tracked.length,
-            mostValuable: mostValuable ? `${mostValuable.name} ($${(mostValuable.estimated_value || 0).toFixed(2)})` : 'N/A'
-        };
-    }, [inventory]);
+    const portfolioStats = useMemo(() => computePortfolioStats(inventory), [inventory]);
 
     const handleDrag = (e) => {
         e.preventDefault();
