@@ -1,3 +1,5 @@
+[![CI](https://github.com/mahesh-dilip/omni/actions/workflows/ci.yml/badge.svg)](https://github.com/mahesh-dilip/omni/actions/workflows/ci.yml)
+
 # Omni
 
 **Snap a photo of an item and Omni uses Google Gemini to identify it, appraise its market value, and track that value over time — a visual, AI-powered inventory of your stuff.**
