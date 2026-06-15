@@ -62,8 +62,18 @@ node_modules/
 # Yarn Integrity file
 .yarn-integrity
 
-# dotenv environment variables file
+# dotenv environment variables files (but keep .env.example committed)
 .env
+.env.local
+.env.*.local
+!.env.example
+
+# Firebase service account key (secret — never commit)
+serviceAccountKey.json
+
+# Production build output
+build/
+frontend/build/
 
 # dataconnect generated files
 .dataconnect
